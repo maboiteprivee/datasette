@@ -2,6 +2,7 @@ import click
 from click_default_group import DefaultGroup
 import json
 import os
+from pathlib import Path
 import shutil
 from subprocess import call, check_output
 import sys
@@ -233,13 +234,42 @@ def package(files, tag, metadata, extra_options, branch, template_dir, static, *
 @click.option('-m', '--metadata', type=click.File(mode='r'), help='Path to JSON file containing license/source metadata')
 @click.option('--template-dir', type=click.Path(exists=True, file_okay=False, dir_okay=True), help='Path to directory containing custom templates')
 @click.option('--static', type=StaticMount(), help='mountpoint:path-to-directory for serving static files', multiple=True)
-def serve(files, host, port, debug, reload, cors, page_size, max_returned_rows, sql_time_limit_ms, sqlite_extensions, inspect_file, metadata, template_dir, static):
+@click.option('--watch-data', is_flag=True, help='Automatically reload if database(s) changes')
+def serve(files, host, port, debug, reload, cors, page_size, max_returned_rows, sql_time_limit_ms, sqlite_extensions, inspect_file, metadata, template_dir, static, watch_data):
     """Serve up specified SQLite database files with a web UI"""
-    if reload:
+    _files = files
+    is_dirs = [Path(file).is_dir() for file in files]
+    if any(is_dirs) and len(files) > 1:
+        click.secho(
+            'Pass only one directory to the files argument',
+            bg='red',
+            fg='white',
+            bold=True,
+            err=True,
+        )
+        sys.exit(1)
+    elif any(is_dirs):
+        dir_path = Path(files[0])
+        files = [f for f in dir_path.glob('*.db')]
+        if not files:
+            click.secho(
+                'No file with ".db" extension found in directory {}'.format(dir_path.name),
+                bg='red',
+                fg='white',
+                bold=True,
+                err=True,
+            )
+            sys.exit(1)
+
+    if reload or watch_data:
         import hupper
         reloader = hupper.start_reloader('datasette.cli.serve')
-        if metadata:
-            reloader.watch_files([metadata.name])
+        to_watch = []
+        if reload and metadata:
+            to_watch += [metadata.name]
+        if watch_data:
+            to_watch += _files
+        reloader.watch_files(to_watch)
 
     inspect_data = None
     if inspect_file:
